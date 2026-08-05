@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added the `display.reduceMotion` setting (`off` | `on` | `strict`) and the `--reduce-motion` launch flag for accessibility and low-bandwidth/remote sessions: `on` freezes cosmetic TUI animation (spinners, shimmer, thinking pulse, terminal-title spinner, welcome intro, splash, codex fireworks, live-mic hue, todo strikethrough sweep) while content repaints normally; `strict` additionally caps repaints at ~4fps (250ms minimum render interval).
+
 ## [17.2.7] - 2026-08-03
 
 ### Changed

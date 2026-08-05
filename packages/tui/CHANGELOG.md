@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added `TUI.setMinRenderInterval()` to raise the minimum throttled-render interval per instance, and stopped Loader tick scheduling for single-frame spinners with static colorizers (used by reduce-motion to freeze spinners and cap repaint rates).
+
 ## [17.2.5] - 2026-08-03
 
 ### Fixed
