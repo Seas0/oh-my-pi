@@ -65,7 +65,6 @@ describe("print mode + plan.defaultOnStartup (#8272)", () => {
 						content: [
 							{ type: "toolCall", name: "write", arguments: { path: "xd://propose", content: "the-plan" } },
 						],
-						delayMs: 5,
 					};
 				}
 				return { content: ["OK"] };
@@ -78,7 +77,7 @@ describe("print mode + plan.defaultOnStartup (#8272)", () => {
 		});
 
 		authStorage = await AuthStorage.create(path.join(tempDir, "auth.db"));
-		authStorage.setRuntimeApiKey("mock", "mock-key");
+		authStorage.keys.setRuntime("mock", "mock-key");
 		const modelRegistry = new ModelRegistry(authStorage, path.join(tempDir, "models.yml"));
 		session = new AgentSession({
 			agent,

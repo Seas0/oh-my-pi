@@ -53,6 +53,7 @@ function shrinkValue(value: unknown, pass: ShrinkPass): unknown {
 	if (typeof value === "string") return shrinkString(value, pass.stringCap);
 	if (Array.isArray(value)) {
 		const keep = Math.min(value.length, pass.arrayLimit);
+		// oxlint-disable-next-line unicorn/no-new-array -- length preallocation
 		const output: unknown[] = new Array(keep + (keep < value.length ? 1 : 0));
 		for (let index = 0; index < keep; index++) output[index] = shrinkValue(value[index], pass);
 		if (keep < value.length) output[keep] = `…[${value.length - keep} items elided for RPC frame]`;
@@ -276,6 +277,14 @@ export class RpcFrameEncoder {
 	setProtocolVersion(version: number): void {
 		if (version !== 1 && version !== 2) throw new Error(`Unsupported RPC protocol version: ${version}`);
 		this.#protocolVersion = version;
+	}
+
+	/**
+	 * Largest UTF-8 JSON size (excluding the newline) of a `response` frame delivered intact under the
+	 * negotiated protocol. A larger response is replaced by a transport-limit error.
+	 */
+	get maxResponseBytes(): number {
+		return this.#protocolVersion === 2 ? MAX_RPC_REASSEMBLED_BYTES : MAX_RPC_FRAME_BYTES - 1;
 	}
 
 	/**

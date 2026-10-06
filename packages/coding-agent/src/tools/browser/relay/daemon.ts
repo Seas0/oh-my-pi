@@ -17,9 +17,16 @@ import { daemonClientForGlobal } from "../../../launch/client";
 import { describeQuietly, stopQuietly, waitReady } from "../../../launch/ensure";
 import { resolveWorkerSpawnCmd } from "../../../subprocess/worker-client";
 import { throwIfAborted } from "../../tool-errors";
+import { probeCdpStatus } from "../attach";
+import { DEFAULT_RELAY_URL } from "./kind";
 
-/** Stable broker daemon name for the relay server. */
-export const RELAY_DAEMON_NAME = "omp.browser.relay";
+const DEFAULT_RELAY_PORT = new URL(DEFAULT_RELAY_URL).port;
+
+/** Broker daemon name for the relay on `port`; one per port, so relays on different ports never replace each other. */
+function relayDaemonName(port: string): string {
+	return port === DEFAULT_RELAY_PORT ? "omp.browser.relay" : `omp.browser.relay.${port}`;
+}
+
 const RELAY_BROKER_SCOPE = "browser-relay";
 /** Matches the serve banner (`omp browser relay listening on http://…`). */
 const READY_LOG_PATTERN = String.raw`browser relay listening on http://\S+`;
@@ -30,13 +37,8 @@ const ENSURE_ATTEMPTS = 3;
 
 /** True when the relay HTTP server answers /json/version at all (200 = extension connected, 503 = waiting for it). */
 export async function probeRelayServer(cdpUrl: string): Promise<boolean> {
-	try {
-		const res = await fetch(`${cdpUrl}/json/version`, { signal: AbortSignal.timeout(PROBE_TIMEOUT_MS) });
-		await res.body?.cancel();
-		return res.ok || res.status === 503;
-	} catch {
-		return false;
-	}
+	const status = await probeCdpStatus(`${cdpUrl}/json/version`, { timeoutMs: PROBE_TIMEOUT_MS });
+	return status === 503 || (status !== null && status >= 200 && status < 300);
 }
 
 /** Auto-start is only safe for endpoints this machine can own. */
@@ -62,6 +64,7 @@ export async function ensureRelayDaemon(opts: { cdpUrl: string; signal?: AbortSi
 	} catch {
 		return false;
 	}
+	const name = relayDaemonName(port);
 	// Open the lazy client before probing. Merely caching SocketDaemonClient
 	// would not create the broker connection (and therefore would hold no lease).
 	const client = await daemonClientForGlobal(RELAY_BROKER_SCOPE);
@@ -74,12 +77,12 @@ export async function ensureRelayDaemon(opts: { cdpUrl: string; signal?: AbortSi
 		// A manual serve or concurrent global-broker start may have won the
 		// port since the last round; adopt it instead of fighting the bind.
 		if (await probeRelayServer(opts.cdpUrl)) return true;
-		const existing = await describeQuietly(client, RELAY_DAEMON_NAME, "Browser relay", opts.signal);
+		const existing = await describeQuietly(client, name, "Browser relay", opts.signal);
 		if (existing && existing.state !== "exited" && existing.state !== "failed") {
-			if (existing.readyAt === undefined) await waitReady(client, RELAY_DAEMON_NAME, "Browser relay", opts.signal);
+			if (existing.readyAt === undefined) await waitReady(client, name, "Browser relay", opts.signal);
 			if (await probeRelayServer(opts.cdpUrl)) return true;
 			// Live record but nothing listening: replace the wedged daemon.
-			await stopQuietly(client, RELAY_DAEMON_NAME, "Browser relay", opts.signal);
+			await stopQuietly(client, name, "Browser relay", opts.signal);
 			continue;
 		}
 		try {
@@ -87,7 +90,7 @@ export async function ensureRelayDaemon(opts: { cdpUrl: string; signal?: AbortSi
 				{
 					op: "start",
 					spec: {
-						name: RELAY_DAEMON_NAME,
+						name,
 						application: spawn.cmd[0]!,
 						args: [...spawn.cmd.slice(1), "--port", port],
 						env: {},
@@ -103,12 +106,12 @@ export async function ensureRelayDaemon(opts: { cdpUrl: string; signal?: AbortSi
 			);
 			if (started.op !== "start") continue;
 			if (await probeRelayServer(opts.cdpUrl)) return true;
-			await stopQuietly(client, RELAY_DAEMON_NAME, "Browser relay", opts.signal);
+			await stopQuietly(client, name, "Browser relay", opts.signal);
 		} catch (error) {
 			throwIfAborted(opts.signal);
 			// Lost a cross-process start race; the next round adopts the winner.
 			logger.debug("Browser relay start contention", {
-				name: RELAY_DAEMON_NAME,
+				name,
 				error: error instanceof Error ? error.message : String(error),
 			});
 		}

@@ -1,7 +1,7 @@
 import * as fs from "node:fs/promises";
 import { isEnoent, logger, ptree } from "@oh-my-pi/pi-utils";
 import { NON_INTERACTIVE_ENV } from "../exec/non-interactive-env";
-import { MessageFramer } from "../jsonrpc/message-framing";
+import { MessageFramer, MessageFramingError } from "../jsonrpc/message-framing";
 import { ToolAbortError } from "../tools/tool-errors";
 import type {
 	DapCapabilities,
@@ -395,7 +395,6 @@ export class DapClient {
 			throw signal.reason instanceof Error ? signal.reason : new ToolAbortError();
 		}
 		const { promise, resolve, reject } = Promise.withResolvers<TBody>();
-		let timeout: NodeJS.Timeout | undefined;
 		const cleanup = () => {
 			unsubscribe();
 			this.#eventWaiterRejectors.delete(closeHandler);
@@ -424,7 +423,7 @@ export class DapClient {
 		if (signal) {
 			signal.addEventListener("abort", abortHandler, { once: true });
 		}
-		timeout = setTimeout(() => {
+		const timeout = setTimeout(() => {
 			cleanup();
 			reject(new Error(`DAP event ${event} timed out after ${timeoutMs}ms`));
 		}, timeoutMs);
@@ -457,7 +456,6 @@ export class DapClient {
 		// receives the rejection normally; this handler is a passive guard.
 		promise.catch(() => {});
 
-		let timeout: NodeJS.Timeout | undefined;
 		const cleanup = () => {
 			if (timeout) clearTimeout(timeout);
 			if (signal) {
@@ -469,7 +467,7 @@ export class DapClient {
 			cleanup();
 			reject(signal?.reason instanceof Error ? signal.reason : new ToolAbortError());
 		};
-		timeout = setTimeout(() => {
+		const timeout = setTimeout(() => {
 			if (!this.#pendingRequests.has(requestSeq)) return;
 			this.#pendingRequests.delete(requestSeq);
 			cleanup();
@@ -518,17 +516,29 @@ export class DapClient {
 	/**
 	 * Framed write to the adapter, bounded by {@link WRITE_MESSAGE_TIMEOUT_MS}
 	 * and by adapter exit. Without this bound a wedged adapter stdin used to
-	 * hang the whole client forever. On timeout or exit-before-flush the client
-	 * disposes itself and rethrows.
+	 * hang the whole client forever. On a failed write (EPIPE), timeout, or
+	 * exit-before-flush the client disposes itself and rethrows.
 	 */
 	async #writeMessage(message: DapRequestMessage | DapResponseMessage): Promise<void> {
 		const content = JSON.stringify(message);
-		this.#writeSink.write(`Content-Length: ${Buffer.byteLength(content, "utf-8")}\r\n\r\n`);
-		this.#writeSink.write(content);
-		const flushResult = this.#writeSink.flush();
-		if (!(flushResult instanceof Promise)) return;
+		// write() returns a Promise while the pipe write is pending; it rejects (EPIPE) once the adapter is
+		// gone. Observe it before flush(), which may throw synchronously and would orphan the rejection.
+		let write: number | Promise<number>;
+		let flush: number | Promise<number> | undefined;
+		try {
+			write = this.#writeSink.write(`Content-Length: ${Buffer.byteLength(content, "utf-8")}\r\n\r\n${content}`);
+			if (write instanceof Promise) write.catch(() => {});
+			flush = this.#writeSink.flush();
+		} catch (error) {
+			// A synchronous write/flush failure is as terminal as a rejected one.
+			void this.dispose();
+			throw error;
+		}
+		if (!(write instanceof Promise) && !(flush instanceof Promise)) return;
+		const flushResult = Promise.all([write, flush]);
 
 		if (this.#adapterExited) {
+			flushResult.catch(() => {});
 			throw new Error(`DAP adapter ${this.adapter.name} exited before write completed`);
 		}
 
@@ -596,6 +606,7 @@ export class DapClient {
 		const framer = new MessageFramer(this.#messageBuffer);
 
 		let closeError: Error | undefined;
+		let framingFailed = false;
 		try {
 			while (true) {
 				const { done, value } = await reader.read();
@@ -635,6 +646,7 @@ export class DapClient {
 				}
 			}
 		} catch (error) {
+			framingFailed = error instanceof MessageFramingError;
 			closeError = new Error(`DAP connection closed: ${toErrorMessage(error)}`);
 		} finally {
 			// Persist any unparsed remainder so a restarted reader resumes mid-message.
@@ -648,6 +660,14 @@ export class DapClient {
 		// in-flight request and event waiter so callers see an immediate error
 		// instead of waiting out their own timeout.
 		this.#failConnection(closeError ?? new Error(`DAP connection closed: ${this.adapter.name} transport ended`));
+		if (framingFailed) {
+			await this.dispose().catch(error => {
+				logger.warn("Failed to dispose DAP adapter after invalid framing", {
+					adapter: this.adapter.name,
+					error: toErrorMessage(error),
+				});
+			});
+		}
 	}
 
 	#handleResponse(message: DapResponseMessage): void {

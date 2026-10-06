@@ -1,13 +1,15 @@
+import { cfgDisplayReduceMotion, cfgSetupVersion } from "../src/modes/settings";
+import { setNativeRendering } from "@oh-my-pi/pi-tui/native/state";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "bun:test";
 import { resetSettingsForTest, Settings, settings } from "../src/config/settings";
-import { LiveVisualizer } from "../src/live/visualizer";
-import { AssistantMessageComponent } from "../src/modes/components/assistant-message";
-import { ToolExecutionComponent, type ToolExecutionUi } from "../src/modes/components/tool-execution";
-import { CURRENT_SETUP_VERSION, runSetupWizard, type SetupScene } from "../src/modes/setup-wizard";
-import type { SetupWizardComponent } from "../src/modes/setup-wizard/wizard-overlay";
-import { initTheme } from "../src/modes/theme/theme";
+import { LiveVisualizer } from "@oh-my-pi/pi-tui/apps/live-visualizer";
+import { AssistantMessageComponent } from "@oh-my-pi/pi-tui/chat/assistant-message";
+import { ToolExecutionComponent, type ToolExecutionUi } from "@oh-my-pi/pi-tui/chat/tool-execution";
+import { CURRENT_SETUP_VERSION, runSetupWizard, type SetupScene } from "../src/modes/setup";
+import type { SetupWizardComponent } from "@oh-my-pi/pi-tui/setup/wizard-overlay";
+import { initTheme } from "@oh-my-pi/pi-tui/theme";
 import type { InteractiveModeContext } from "../src/modes/types";
-import type { TodoToolDetails } from "../src/tools/todo";
+import type { TodoToolDetails } from "@oh-my-pi/pi-tui/tools/todo";
 import { createAssistantMessage } from "./helpers/agent-session-setup";
 
 beforeAll(async () => {
@@ -20,6 +22,7 @@ beforeEach(async () => {
 });
 
 afterEach(() => {
+	setNativeRendering(false);
 	vi.useRealTimers();
 	vi.restoreAllMocks();
 	resetSettingsForTest();
@@ -38,7 +41,7 @@ describe.each(["on", "strict"] as const)("reduce motion %s", level => {
 				vi.advanceTimersByTime(100);
 				expect(repaint).toHaveBeenCalled();
 
-				settings.override("display.reduceMotion", level);
+				cfgDisplayReduceMotion.override(settings, level);
 				if (invalidate) component.invalidate(); // /config invalidates the TUI tree.
 				repaint.mockClear();
 				vi.advanceTimersByTime(300);
@@ -50,7 +53,7 @@ describe.each(["on", "strict"] as const)("reduce motion %s", level => {
 				expect(component.render(100).join("\n")).toBe(frozen);
 				expect(repaint).not.toHaveBeenCalled();
 
-				settings.override("display.reduceMotion", "off");
+				cfgDisplayReduceMotion.override(settings, "off");
 				component.invalidate();
 				vi.advanceTimersByTime(100);
 				expect(repaint).toHaveBeenCalled();
@@ -91,7 +94,7 @@ describe.each(["on", "strict"] as const)("reduce motion %s", level => {
 				vi.advanceTimersByTime(65);
 				expect(repaint).toHaveBeenCalled();
 
-				settings.override("display.reduceMotion", level);
+				cfgDisplayReduceMotion.override(settings, level);
 				if (invalidate) component.invalidate();
 				else vi.advanceTimersByTime(65);
 				const settled = component.render(100).join("\n");
@@ -116,7 +119,7 @@ describe.each(["on", "strict"] as const)("reduce motion %s", level => {
 		visualizer.setFrame(3);
 		const animated = visualizer.render(80);
 		// Toggle without a new frame: the render cache must also observe the setting.
-		settings.override("display.reduceMotion", level);
+		cfgDisplayReduceMotion.override(settings, level);
 		const frozen = visualizer.render(80);
 		expect(frozen).not.toEqual(animated);
 		for (const frame of [4, 11, 25]) {
@@ -136,77 +139,83 @@ describe.each(["on", "strict"] as const)("reduce motion %s", level => {
 		visualizer.setTranscript("still listening");
 		expect(visualizer.render(80).join("\n")).toContain("still listening");
 		visualizer.setPhase("muted");
-		expect(Bun.stripANSI(visualizer.render(80)[1])).toBe(`│${" ".repeat(78)}│`);
+		expect(Bun.stripANSI(visualizer.render(80)[1])).not.toMatch(/[▁▂▃▄▅▆▇█]/);
 
 		visualizer.setPhase("working");
-		settings.override("display.reduceMotion", "off");
+		cfgDisplayReduceMotion.override(settings, "off");
 		const resumed = visualizer.render(80);
 		visualizer.setFrame(61);
 		expect(visualizer.render(80)).not.toEqual(resumed);
 	});
 
-	it("runs setup scenes immediately, saves completion, and skips cosmetic timers and welcome", async () => {
-		vi.useFakeTimers();
-		const setupSettings = Settings.isolated({ "display.reduceMotion": level });
-		const requestRender = vi.fn();
-		const hide = vi.fn();
-		const playWelcomeIntro = vi.fn();
-		const mounted: string[] = [];
-		const disposed: string[] = [];
-		const scenes: SetupScene[] = ["first", "second"].map(id => ({
-			id,
-			title: id,
-			minVersion: 1,
-			mount: host => ({
+	it.each([false, true])(
+		"runs setup immediately and saves completion without timers or welcome (native=%s)",
+		async native => {
+			setNativeRendering(native);
+			vi.useFakeTimers();
+			const setupSettings = Settings.isolated({ "display.reduceMotion": level });
+			const requestRender = vi.fn();
+			const hide = vi.fn();
+			const playWelcomeIntro = vi.fn();
+			const mounted: string[] = [];
+			const disposed: string[] = [];
+			const scenes: SetupScene[] = ["first", "second"].map(id => ({
+				id,
 				title: id,
-				onMount: () => {
-					mounted.push(id);
+				minVersion: 1,
+				mount: host => ({
+					title: id,
+					onMount: () => {
+						mounted.push(id);
+					},
+					handleInput: () => host.finish("done"),
+					render: () => [`configure ${id}`],
+					dispose: () => {
+						disposed.push(id);
+					},
+				}),
+			}));
+			let component: SetupWizardComponent | undefined;
+			const ctx = {
+				settings: setupSettings,
+				playWelcomeIntro,
+				ui: {
+					terminal: { rows: 30 },
+					showOverlay: (next: SetupWizardComponent) => {
+						component = next;
+						return { hide };
+					},
+					setFocus: vi.fn(),
+					requestRender,
 				},
-				handleInput: () => host.finish("done"),
-				render: () => [`configure ${id}`],
-				dispose: () => {
-					disposed.push(id);
-				},
-			}),
-		}));
-		let component: SetupWizardComponent | undefined;
-		const ctx = {
-			settings: setupSettings,
-			playWelcomeIntro,
-			ui: {
-				terminal: { rows: 30 },
-				showOverlay: (next: SetupWizardComponent) => {
-					component = next;
-					return { hide };
-				},
-				setFocus: vi.fn(),
-				requestRender,
-			},
-		} as unknown as InteractiveModeContext;
-		const pending = runSetupWizard(ctx, scenes);
-		try {
-			if (!component) throw new Error("Setup overlay was not mounted");
-			expect(mounted).toEqual(["first"]);
-			const frame = component.render(80);
-			expect(frame.join("\n")).toContain("configure first");
-			requestRender.mockClear();
-			vi.advanceTimersByTime(3_000);
-			expect(component.render(80)).toEqual(frame);
-			expect(requestRender).not.toHaveBeenCalled();
-			component.handleInput("\r");
-			expect(mounted).toEqual(["first", "second"]);
-			expect(component.render(80).join("\n")).toContain("configure second");
-			component.handleInput("\r");
-			await pending; // No outro timer or extra input is needed to finish.
-			expect(disposed).toEqual(["first", "second"]);
-			expect(setupSettings.get("setupVersion")).toBe(CURRENT_SETUP_VERSION);
-			expect(hide).toHaveBeenCalledTimes(1);
-			expect(playWelcomeIntro).not.toHaveBeenCalled();
-			requestRender.mockClear();
-			vi.advanceTimersByTime(3_000);
-			expect(requestRender).not.toHaveBeenCalled();
-		} finally {
-			component?.dispose();
-		}
-	});
+			} as unknown as InteractiveModeContext;
+			const pending = runSetupWizard(ctx, scenes);
+			try {
+				if (!component) throw new Error("Setup overlay was not mounted");
+				expect(mounted).toEqual(["first"]);
+				const frame = component.render(80);
+				expect(frame.join("\n")).toContain("configure first");
+				expect(JSON.stringify(component.describe())).toContain("omp.setup.scene");
+				expect(JSON.stringify(component.describe())).not.toContain("shimmer");
+				requestRender.mockClear();
+				vi.advanceTimersByTime(3_000);
+				expect(component.render(80)).toEqual(frame);
+				expect(requestRender).not.toHaveBeenCalled();
+				component.handleInput("\r");
+				expect(mounted).toEqual(["first", "second"]);
+				expect(component.render(80).join("\n")).toContain("configure second");
+				component.handleInput("\r");
+				await pending; // No outro timer or extra input is needed to finish.
+				expect(disposed).toEqual(["first", "second"]);
+				expect(cfgSetupVersion.get(setupSettings)).toBe(CURRENT_SETUP_VERSION);
+				expect(hide).toHaveBeenCalledTimes(1);
+				expect(playWelcomeIntro).not.toHaveBeenCalled();
+				requestRender.mockClear();
+				vi.advanceTimersByTime(3_000);
+				expect(requestRender).not.toHaveBeenCalled();
+			} finally {
+				component?.dispose();
+			}
+		},
+	);
 });

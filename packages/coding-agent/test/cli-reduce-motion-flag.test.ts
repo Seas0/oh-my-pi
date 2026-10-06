@@ -1,6 +1,8 @@
 import { describe, expect, it } from "bun:test";
 import { parseArgs } from "@oh-my-pi/pi-coding-agent/cli/args";
 import { extractProfileFlags } from "@oh-my-pi/pi-coding-agent/cli/profile-bootstrap";
+import { restartArgv } from "@oh-my-pi/pi-coding-agent/cli/flag-tables";
+import { resolveCliArgv } from "@oh-my-pi/pi-coding-agent/cli-commands";
 
 describe("parseArgs — --reduce-motion flag", () => {
 	it("parses the bare form as on", () => {
@@ -37,6 +39,24 @@ describe("parseArgs — --reduce-motion flag", () => {
 		expect(result.reduceMotion).toBe("on");
 		expect(result.messages).toEqual(["strict", "--print"]);
 		expect(result.print).toBeUndefined();
+	});
+
+	it("keeps subcommand routing and restart from consuming a prompt as a motion level", () => {
+		expect(resolveCliArgv(["--reduce-motion", "acp"])).toEqual({ argv: ["acp", "--reduce-motion"] });
+		expect(resolveCliArgv(["--reduce-motion", "strict", "fix this"])).toEqual({
+			argv: ["launch", "--reduce-motion", "strict", "fix this"],
+		});
+		expect(restartArgv(["--reduce-motion", "fix this"], "session-id")).toEqual([
+			"--reduce-motion",
+			"--resume",
+			"session-id",
+		]);
+		expect(restartArgv(["--reduce-motion", "strict", "fix this"], "session-id")).toEqual([
+			"--reduce-motion",
+			"strict",
+			"--resume",
+			"session-id",
+		]);
 	});
 
 	it("preserves prompts and mode boundaries through profile bootstrap and reparsing", () => {
