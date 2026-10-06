@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { parseArgs } from "@oh-my-pi/pi-coding-agent/cli/args";
+import { extractProfileFlags } from "@oh-my-pi/pi-coding-agent/cli/profile-bootstrap";
 
 describe("parseArgs — --reduce-motion flag", () => {
 	it("parses the bare form as on", () => {
@@ -7,25 +8,52 @@ describe("parseArgs — --reduce-motion flag", () => {
 		expect(result.reduceMotion).toBe("on");
 	});
 
-	it("parses a space-separated value", () => {
-		const result = parseArgs(["--reduce-motion", "strict"]);
-		expect(result.reduceMotion).toBe("strict");
+	it.each(["off", "on", "strict"])("parses space-separated mode %s before a prompt", mode => {
+		const result = parseArgs(["--reduce-motion", mode, "fix this"]);
+		expect(result.reduceMotion).toBe(mode);
+		expect(result.messages).toEqual(["fix this"]);
 	});
 
-	it("parses an equals-form value", () => {
-		const result = parseArgs(["--reduce-motion=strict"]);
-		expect(result.reduceMotion).toBe("strict");
+	it.each(["off", "on", "strict"])("parses explicit mode %s before a prompt", mode => {
+		const result = parseArgs([`--reduce-motion=${mode}`, "fix this"]);
+		expect(result.reduceMotion).toBe(mode);
+		expect(result.messages).toEqual(["fix this"]);
 	});
 
-	it("accepts off", () => {
-		const result = parseArgs(["--reduce-motion=off"]);
-		expect(result.reduceMotion).toBe("off");
+	it.each(["fix this", "bogus"])("preserves positional prompt %s after the bare flag", prompt => {
+		const result = parseArgs(["--reduce-motion", prompt]);
+		expect(result.reduceMotion).toBe("on");
+		expect(result.messages).toEqual([prompt]);
 	});
 
-	it("rejects unknown values", () => {
-		expect(() => parseArgs(["--reduce-motion", "bogus"])).toThrow(
-			'--reduce-motion accepts "on", "strict", or "off" (got "bogus")',
+	it.each(["bogus", "", "--print"])("rejects invalid explicit mode %s", value => {
+		expect(() => parseArgs([`--reduce-motion=${value}`])).toThrow(
+			`--reduce-motion accepts "on", "strict", or "off" (got "${value}")`,
 		);
+	});
+
+	it("preserves mode-shaped prompts after --", () => {
+		const result = parseArgs(["--reduce-motion", "--", "strict", "--print"]);
+		expect(result.reduceMotion).toBe("on");
+		expect(result.messages).toEqual(["strict", "--print"]);
+		expect(result.print).toBeUndefined();
+	});
+
+	it("preserves prompts and mode boundaries through profile bootstrap and reparsing", () => {
+		for (const argv of [
+			["--reduce-motion", "fix this", "--profile", "work"],
+			["--reduce-motion", "--profile", "work", "strict"],
+		]) {
+			const original = [...argv];
+			const extracted = extractProfileFlags(argv);
+			expect(extracted.profile).toBe("work");
+			for (let pass = 0; pass < 2; pass++) {
+				const result = parseArgs(extracted.argv);
+				expect(result.reduceMotion).toBe("on");
+				expect(result.messages).toEqual([argv[1] === "fix this" ? "fix this" : "strict"]);
+			}
+			expect(argv).toEqual(original);
+		}
 	});
 
 	it("defaults reduceMotion to undefined when flag is not provided", () => {

@@ -63,9 +63,8 @@ export type OptionalSetter = (result: Args, value: string | undefined) => void;
 /**
  * Per-flag optional-value consumption policy.
  *
- * Every optional flag always rejects tokens that start with `-` — that shared
- * rule lives in the dispatch site. These booleans capture the *additional*
- * per-flag quirks:
+ * Bare optional flags reject tokens that start with `-`. These options capture
+ * the additional per-flag quirks:
  *
  * - `rejectEmpty`: treat `""` like “no value provided”. Needed for
  *   `--resume` / `-r` / `--session`. Without it, an empty string
@@ -75,6 +74,18 @@ export type OptionalSetter = (result: Args, value: string | undefined) => void;
 export interface OptionalFlagConfig {
 	set: OptionalSetter;
 	rejectEmpty?: boolean;
+	/** Only consume these space-separated values; explicit `=...` is validated by the setter. */
+	values?: readonly string[];
+}
+
+/** Shared by the launch parser and the early profile/alias bootstrap. */
+export function consumesOptionalValue(config: OptionalFlagConfig, value: string | undefined): value is string {
+	return (
+		value !== undefined &&
+		!value.startsWith("-") &&
+		!(config.rejectEmpty === true && value.length === 0) &&
+		(config.values === undefined || config.values.includes(value))
+	);
 }
 
 // Shared setters for flags that alias the same field.
@@ -246,15 +257,15 @@ export const STRING_SETTERS: Record<string, StringSetter> = {
 /**
  * Optional-value flags. Setters receive `undefined` for the bare form.
  *
- * The dispatch in `args.ts` applies the shared "doesn't start with `-`"
- * check for every flag, then consults the per-flag booleans below for the
- * remaining quirks.
+ * `consumesOptionalValue` applies the shared consumption policy. For enumerated
+ * flags, `args.ts` always passes explicit `=...` values to the setter.
  */
 export const OPTIONAL_FLAGS: Record<string, OptionalFlagConfig> = {
 	"--resume": { set: setResume, rejectEmpty: true },
 	"-r": { set: setResume, rejectEmpty: true },
 	"--session": { set: setResume, rejectEmpty: true },
 	"--reduce-motion": {
+		values: ["off", "on", "strict"],
 		set: (result, value) => {
 			if (value === undefined) {
 				result.reduceMotion = "on";

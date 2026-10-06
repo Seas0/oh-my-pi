@@ -359,7 +359,8 @@ export class AssistantMessageComponent extends Container {
 	}
 
 	#thinkingDotsLabel(): string {
-		const glyph = THINKING_DOTS_FRAMES[this.#thinkingDotsFrame % THINKING_DOTS_FRAMES.length] ?? "…";
+		const frame = isReduceMotion() ? 0 : this.#thinkingDotsFrame;
+		const glyph = THINKING_DOTS_FRAMES[frame % THINKING_DOTS_FRAMES.length] ?? "…";
 		const coloredGlyph = theme.fg("thinkingText", glyph);
 		const thinkingLabel = theme.fg("muted", " Thinking");
 		const rate = Math.min(SPEED_MAX, sharedSpeedTracker.getSpeed());
@@ -385,7 +386,11 @@ export class AssistantMessageComponent extends Container {
 	}
 
 	#startThinkingAnimation(): void {
-		if (this.#thinkingDotsTimer || isReduceMotion()) return;
+		if (isReduceMotion()) {
+			this.#stopThinkingAnimation();
+			return;
+		}
+		if (this.#thinkingDotsTimer) return;
 		this.#scheduleThinkingFrame();
 	}
 
@@ -406,7 +411,7 @@ export class AssistantMessageComponent extends Container {
 
 	#advanceThinkingDots(): void {
 		this.#thinkingDotsTimer = undefined;
-		if (!this.#thinkingDots) {
+		if (!this.#thinkingDots || isReduceMotion()) {
 			this.#stopThinkingAnimation();
 			return;
 		}

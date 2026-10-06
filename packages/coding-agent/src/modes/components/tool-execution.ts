@@ -783,7 +783,7 @@ export class ToolExecutionComponent extends Container implements NativeScrollbac
 		this.#renderState.spinnerFrame = 0;
 		this.#todoStrikeInterval = setInterval(() => {
 			const nextFrame = (this.#spinnerFrame ?? 0) + 1;
-			if (nextFrame > TODO_STRIKE_TOTAL_FRAMES) {
+			if (isReduceMotion() || nextFrame > TODO_STRIKE_TOTAL_FRAMES) {
 				this.#stopTodoStrikeAnimation();
 			} else {
 				this.#spinnerFrame = nextFrame;
@@ -923,6 +923,7 @@ export class ToolExecutionComponent extends Container implements NativeScrollbac
 	}
 
 	override invalidate(): void {
+		if (this.#todoStrikeInterval && isReduceMotion()) this.#stopTodoStrikeAnimation();
 		super.invalidate();
 		this.#updateDisplay();
 	}

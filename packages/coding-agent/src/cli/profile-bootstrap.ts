@@ -35,6 +35,7 @@
 
 import { isSubcommand } from "../cli-commands";
 import {
+	consumesOptionalValue,
 	EXTENSION_SHADOWABLE_STRING_FLAGS,
 	isUnknownLongValueCandidate,
 	OPTIONAL_FLAGS,
@@ -184,7 +185,7 @@ export function extractProfileFlags(argv: readonly string[]): ProfileBootstrapRe
 			stripped.push(arg);
 			const config = OPTIONAL_FLAGS[arg];
 			const next = argv[index + 1];
-			if (next !== undefined && !next.startsWith("-") && !(config.rejectEmpty === true && next.length === 0)) {
+			if (consumesOptionalValue(config, next)) {
 				stripped.push(next);
 				index += 1;
 			}

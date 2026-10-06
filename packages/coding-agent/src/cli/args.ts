@@ -8,6 +8,7 @@ import type { ServiceTierOpenAISettingValue } from "../config/service-tier";
 import { CLI_THINKING_LEVELS, type ConfiguredThinkingLevel, parseCliThinkingLevel } from "../thinking";
 import { BUILTIN_TOOL_NAMES, HIDDEN_TOOL_NAMES, normalizeToolNames } from "../tools/builtin-names";
 import {
+	consumesOptionalValue,
 	OPTIONAL_FLAGS,
 	OPTIONAL_VALUE_FLAGS,
 	type ParseDeps,
@@ -221,7 +222,7 @@ export function parseArgs(inputArgs: string[], extensionFlags?: Map<string, { ty
 			const config = OPTIONAL_FLAGS[arg];
 			const next = args[i + 1];
 			const consume =
-				next !== undefined && !next.startsWith("-") && !(config.rejectEmpty === true && next.length === 0);
+				(equalsValueIndex !== -1 && config.values !== undefined) || consumesOptionalValue(config, next);
 			config.set(result, consume ? args[++i] : undefined);
 		} else if (arg === "--help" || arg === "-h") {
 			result.help = true;

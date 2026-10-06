@@ -79,7 +79,7 @@ export async function runSetupWizard(
 	options: RunSetupWizardOptions = {},
 ): Promise<void> {
 	if (scenes.length === 0) return;
-	const component = new SetupWizardComponent(ctx, scenes);
+	const component = new SetupWizardComponent(ctx, scenes, ctx.settings.get("display.reduceMotion") !== "off");
 	const overlay = ctx.ui.showOverlay(component, {
 		width: "100%",
 		maxHeight: "100%",
@@ -97,7 +97,7 @@ export async function runSetupWizard(
 		ctx.ui.setFocus(component);
 		overlay.hide();
 	}
-	if (options.playWelcomeIntro !== false) {
+	if (options.playWelcomeIntro !== false && ctx.settings.get("display.reduceMotion") === "off") {
 		ctx.playWelcomeIntro();
 	}
 }
